@@ -4,6 +4,15 @@ Flawed baseline **0.2.0** built on [uwidcit/faststart](https://github.com/uwidci
 
 FastStart provides the SSR shell, JWT cookie auth, SQLModel, `manage.py`, and Render/Docker wiring. The job-board scenario adds domain models/services and a JSON API under `/api` (see `/docs`).
 
+## Team: Resume Routers
+
+| Name | GitHub |
+| --- | --- |
+| Rafael Ollivierra | RafaelOllivierra21 |
+| Jon-Paul Auguste | jonpaulauguste |
+| Kristopher Boodoosingh | krisingh12 |
+| Dana Ramtahal | DanaRPR |
+
 ## Quick start
 
 ```text
