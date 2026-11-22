@@ -41,7 +41,7 @@ class ApplyBody(BaseModel):
 
 class TransitionBody(BaseModel):
     action: str = Field(
-        description="mark_reviewed | shortlist | reject | hire | reopen"
+        description="mark_reviewed | shortlist | reject | hire"
     )
     actor_id: int
 
@@ -144,5 +144,7 @@ def transition(application_id: int, body: TransitionBody) -> dict[str, Any]:
         body.actor_id, application_id, body.action
     )
     if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
+        raise HTTPException(
+            status_code=result.get("status_code", 400), detail=result.get("error")
+        )
     return result
