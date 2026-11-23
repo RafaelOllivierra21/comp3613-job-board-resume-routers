@@ -13,6 +13,8 @@ from app.services.board_auth import get_user
 from app.services.lifecycle import ACTIONS, apply_action
 from app.services.states import InvalidTransition
 
+from datetime import date
+from app.services.listings import ELIGIBLE_PROGRAMMES
 
 def apply(
     graduate_id: int,
@@ -22,16 +24,32 @@ def apply(
 ) -> dict[str, Any]:
     user = get_user(graduate_id)
     if not user or user["role"] != "graduate":
-        return {"ok": False, "error": "graduates only"}
-    # DEFECT: no programme eligibility check
+        return {"ok": False, "error": "graduates only", "status_code": 403}
+    if user.get("programme") not in ELIGIBLE_PROGRAMMES:
+        return {
+            "ok": False,
+            "error": "only eligible programme graduates can apply",
+            "status_code": 403,
+        }
+
+    resume = resume_text or user.get("resume_text") or ""
+    if not cover_letter.strip() or not resume.strip():
+        return {"ok": False, "error": "cover letter and resume are required"}
 
     with Session(engine) as session:
         listing = session.get(Listing, listing_id)
         if listing is None:
-            return {"ok": False, "error": "listing not found"}
+            return {"ok": False, "error": "listing not found", "status_code": 404}
+        if listing.status != "published":
+            return {"ok": False, "error": "listing is not open for applications"}
+        if listing.deadline < date.today().isoformat():
+            return {"ok": False, "error": "listing deadline has passed"}
+        if listing.apply_mode == "external":
+            return {
+                "ok": False,
+                "error": f"apply on the employer's site at {listing.external_url}",
+            }
 
-        # DEFECT: allows apply on pending / expired; external still creates a row
-        resume = resume_text or user.get("resume_text") or ""
         application = Application(
             listing_id=listing_id,
             graduate_id=graduate_id,

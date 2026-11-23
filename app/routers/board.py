@@ -113,7 +113,8 @@ def apply(body: ApplyBody) -> dict[str, Any]:
         body.actor_id, body.listing_id, body.cover_letter, body.resume_text
     )
     if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
+                raise HTTPException(
+            status_code=result.get("status_code", 400), detail=result.get("error"))
     return result
 
 
