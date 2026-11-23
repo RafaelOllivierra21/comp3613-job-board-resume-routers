@@ -10,7 +10,8 @@ from app.database import engine
 from app.models.application import Application
 from app.models.listing import Listing
 from app.services.board_auth import get_user
-from app.services.lifecycle import ACTIONS, apply_action, derived_status_from_flags
+from app.services.lifecycle import ACTIONS, apply_action
+from app.services.states import InvalidTransition
 
 
 def apply(
@@ -36,11 +37,6 @@ def apply(
             graduate_id=graduate_id,
             cover_letter=cover_letter,
             resume_text=resume,
-            status="submitted",
-            flag_reviewed=0,
-            flag_shortlisted=0,
-            flag_rejected=0,
-            flag_hired=0,
         )
         session.add(application)
         session.commit()
@@ -48,7 +44,7 @@ def apply(
         return {
             "ok": True,
             "application_id": application.id,
-            "status": "submitted",
+            "status": application.state_name,
         }
 
 
@@ -62,9 +58,8 @@ def my_applications(graduate_id: int) -> list[dict[str, Any]]:
         results = []
         for row in rows:
             app = row.model_dump()
-            # DEFECT: graduate view sometimes uses flag-derived status, not column
             view = dict(app)
-            view["status"] = derived_status_from_flags(app)
+            view["status"] = row.state_name
             results.append(view)
         return results
 
@@ -101,7 +96,7 @@ def export_applicants(admin_id: int, listing_id: int) -> dict[str, Any]:
 def transition_application(
     actor_id: int, application_id: int, action: str
 ) -> dict[str, Any]:
-    """Drive the poorly factored lifecycle module."""
+    """Change an application's status through its State object."""
     actor = get_user(actor_id)
     if not actor:
         return {"ok": False, "error": "unknown user"}
@@ -116,22 +111,10 @@ def transition_application(
         if row is None:
             return {"ok": False, "error": "application not found"}
 
-        result = apply_action(row.model_dump(), action)
-        if not result.get("ok"):
-            return result
-        if not result.get("changed"):
-            return {
-                "ok": True,
-                "application": result["application"],
-                "changed": False,
-            }
-
-        updated = result["row"]
-        row.status = updated["status"]
-        row.flag_reviewed = updated["flag_reviewed"]
-        row.flag_shortlisted = updated["flag_shortlisted"]
-        row.flag_rejected = updated["flag_rejected"]
-        row.flag_hired = updated["flag_hired"]
+        try:
+            apply_action(row, action)
+        except InvalidTransition as exc:
+            return {"ok": False, "error": str(exc), "status_code": 409}
         session.add(row)
         session.commit()
         session.refresh(row)
