@@ -16,15 +16,15 @@ Checking who may change a status stays in the service layer, outside the state c
 | app/models/application.py | Application is the context. It stores only state_name, rebuilds its state with state(), and passes mark_reviewed(), shortlist(), reject() and hire() to that state | The status column and the flag_reviewed, flag_shortlisted, flag_rejected and flag_hired columns |
 | app/services/lifecycle.py | A thin entry point. apply_action() checks the action name and calls the matching method on Application, with no branching on status | The old apply_action() with its nested branches and the reopen action |
 | app/services/applications.py | The service layer. transition_application() checks ownership with verify_listing_owner() before any state is touched and turns InvalidTransition into a 409 response. application_view() gives every role the same application data read from state_name | The check that let any employer or admin change any application |
-| app/routers/board.py | The transition route returns the status code the service gives back | A route that returned 400 for every error |
+| app/routers/board.py | Reads the acting user from the login cookie and returns the status code from the service | Trusting actor_id and 400 for every error |
 | tests/test_states.py | 27 unit tests over all 20 pairs of state and action, plus the registry and an unknown state name | No lifecycle tests in the starter |
 
 ## 3. How One Transition Runs
 
 This is the path when the employer who owns a listing shortlists an application that is in Reviewed.
 
-1. The employer sends POST /api/applications/{id}/transition with the action shortlist.
-2. The route in board.py calls transition_application() in applications.py.
+1. The employer, already logged in through POST /api/auth/login, sends POST /api/applications/{id}/transition with the action shortlist.
+2. The route in board.py reads the employer from the login cookie and calls transition_application() in applications.py. A request with no login gets 401.
 3. The service checks that the actor is an employer and that shortlist is a known action. An unknown action returns 400.
 4. The service loads the application and its listing. A missing application returns 404.
 5. verify_listing_owner() checks that the listing belongs to this employer. Anyone else gets 403 and nothing changes.
@@ -75,9 +75,9 @@ These changes are recorded on Trello card #17 so the class diagram can be update
 
 1. Run python manage.py init to create and seed the database.
 2. Run python -m pytest -q. The lifecycle tests are in tests/test_states.py.
-3. Run python manage.py run and open /docs in the browser.
-4. As graduate 2, apply to listing 1 with a cover letter and resume. The application starts as submitted.
-5. As employer 4, who owns listing 1, transition it with mark_reviewed and then shortlist. Each step returns the new status.
-6. As employer 4, try mark_reviewed again. It returns 409 and the status stays shortlisted.
-7. As employer 5 or admin 1, try any action. It returns 403.
-8. As graduate 2, list your applications. The status matches what employer 4 sees for listing 1.
+3. Run python manage.py run and open /docs in the browser. Use POST /api/auth/login before each step to log in as the user named in it.
+4. Log in as grad.dcit@example.com and apply to listing 1 with a cover letter and resume. The application starts as submitted.
+5. Log in as employer@example.com, who owns listing 1, and transition it with mark_reviewed and then shortlist. Each step returns the new status.
+6. Still as employer@example.com, try mark_reviewed again. It returns 409 and the status stays shortlisted.
+7. Log in as employer2@example.com or admin@example.com and try any action. It returns 403.
+8. Log in as grad.dcit@example.com and list your applications. The status matches what employer@example.com sees for listing 1.
