@@ -58,7 +58,9 @@ def login(body: LoginBody) -> dict[str, Any]:
 def subscribe(body: ActorBody) -> dict[str, Any]:
     result = listings.subscribe(body.actor_id)
     if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
+        raise HTTPException(
+            status_code=result.get("status_code", 400), detail=result.get("error")
+        )
     return result
 
 

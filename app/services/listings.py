@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlmodel import Session, select
@@ -18,8 +19,13 @@ ELIGIBLE_PROGRAMMES = {"DCIT"}
 def subscribe(graduate_id: int) -> dict[str, Any]:
     user = get_user(graduate_id)
     if not user or user["role"] != "graduate":
-        return {"ok": False, "error": "graduates only"}
-    # DEFECT: no programme eligibility check
+        return {"ok": False, "error": "graduates only", "status_code": 403}
+    if user.get("programme") not in ELIGIBLE_PROGRAMMES:
+        return {
+            "ok": False,
+            "error": "only eligible programme graduates can subscribe",
+            "status_code": 403,
+        }
     with Session(engine) as session:
         existing = session.exec(
             select(Subscription).where(Subscription.graduate_id == graduate_id)
@@ -31,9 +37,15 @@ def subscribe(graduate_id: int) -> dict[str, Any]:
 
 
 def list_jobs_for_graduates() -> list[dict[str, Any]]:
+    """Only published listings whose deadline has not passed."""
+    today = date.today().isoformat()
     with Session(engine) as session:
-        # DEFECT: returns pending + expired listings
-        rows = session.exec(select(Listing).order_by(Listing.id)).all()
+        rows = session.exec(
+            select(Listing)
+            .where(Listing.status == "published")
+            .where(Listing.deadline >= today)
+            .order_by(Listing.id)
+        ).all()
         return [r.model_dump() for r in rows]
 
 
@@ -62,8 +74,8 @@ def submit_listing(
     if apply_mode == "external" and not external_url:
         return {"ok": False, "error": "external_url required"}
 
-    # DEFECT: published immediately (skip pending/admin)
-    status = "published"
+    # An admin must publish it before graduates can see it.
+    status = "pending"
     with Session(engine) as session:
         listing = Listing(
             employer_id=employer_id,
@@ -81,7 +93,21 @@ def submit_listing(
         return {"ok": True, "listing_id": listing.id, "status": status}
 
 
+def _notify(session: Session, listing: Listing) -> int:
+    """Add one notification per subscriber. Returns how many were sent."""
+    subs = session.exec(select(Subscription)).all()
+    for sub in subs:
+        session.add(
+            Notification(
+                user_id=sub.graduate_id,
+                message=f"New job published: {listing.title} at {listing.company}",
+            )
+        )
+    return len(subs)
+
+
 def publish_listing(admin_id: int, listing_id: int) -> dict[str, Any]:
+    """Publish a pending listing and notify subscribers in the same step."""
     admin = get_user(admin_id)
     if not admin or admin["role"] != "admin":
         return {"ok": False, "error": "admin only"}
@@ -89,11 +115,13 @@ def publish_listing(admin_id: int, listing_id: int) -> dict[str, Any]:
         listing = session.get(Listing, listing_id)
         if listing is None:
             return {"ok": False, "error": "listing not found"}
+        if listing.status == "published":
+            return {"ok": True, "notified": False, "count": 0}
         listing.status = "published"
         session.add(listing)
+        count = _notify(session, listing)
         session.commit()
-    # DEFECT: publish does not notify subscribers
-    return {"ok": True, "notified": False}
+    return {"ok": True, "notified": True, "count": count}
 
 
 def notify_subscribers(admin_id: int, listing_id: int) -> dict[str, Any]:
@@ -104,13 +132,6 @@ def notify_subscribers(admin_id: int, listing_id: int) -> dict[str, Any]:
         listing = session.get(Listing, listing_id)
         if listing is None:
             return {"ok": False, "error": "listing not found"}
-        subs = session.exec(select(Subscription)).all()
-        for sub in subs:
-            session.add(
-                Notification(
-                    user_id=sub.graduate_id,
-                    message=f"New job published: {listing.title} at {listing.company}",
-                )
-            )
+        count = _notify(session, listing)
         session.commit()
-        return {"ok": True, "count": len(subs)}
+        return {"ok": True, "count": count}
