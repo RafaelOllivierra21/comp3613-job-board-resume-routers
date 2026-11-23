@@ -66,6 +66,11 @@ def apply(
         }
 
 
+def application_view(row: Application) -> dict[str, Any]:
+    """One shape for every role. status is read from state_name, never stored twice."""
+    return {**row.model_dump(), "status": row.state_name}
+
+
 def my_applications(graduate_id: int) -> list[dict[str, Any]]:
     """Graduate view. Reads state_name, the same field the employer view reads."""
     with Session(engine) as session:
@@ -74,7 +79,7 @@ def my_applications(graduate_id: int) -> list[dict[str, Any]]:
             .where(Application.graduate_id == graduate_id)
             .order_by(Application.id)
         ).all()
-        return [row.model_dump() for row in rows]
+        return [application_view(row) for row in rows]
 
 
 def verify_listing_owner(actor: dict[str, Any], listing: Listing) -> bool:
@@ -98,7 +103,7 @@ def listing_applicants(viewer_id: int, listing_id: int) -> dict[str, Any]:
             .where(Application.listing_id == listing_id)
             .order_by(Application.id)
         ).all()
-        return {"ok": True, "applicants": [r.model_dump() for r in rows]}
+        return {"ok": True, "applicants": [application_view(r) for r in rows]}
 
 
 def export_applicants(admin_id: int, listing_id: int) -> dict[str, Any]:
@@ -142,4 +147,4 @@ def transition_application(
         session.add(row)
         session.commit()
         session.refresh(row)
-        return {"ok": True, "application": row.model_dump(), "changed": True}
+        return {"ok": True, "application": application_view(row), "changed": True}
