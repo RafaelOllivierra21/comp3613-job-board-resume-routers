@@ -1,12 +1,11 @@
 """Service-level tests for application lifecycle persistence, AC 11, and #19 listing fixes."""
 
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-import app.models
 import app.services.applications as applications_svc
 import app.services.board_auth as board_auth_svc
 import app.services.listings as listings_svc
@@ -38,9 +37,9 @@ def db_engine(monkeypatch):
 
 @pytest.fixture
 def seed_data(db_engine):
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
-
+    today = datetime.now(timezone.utc).date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    yesterday = (today - timedelta(days=1)).isoformat()
     with Session(db_engine) as session:
         admin = User(
             username="admin1",
@@ -125,8 +124,8 @@ def seed_data(db_engine):
         }
 
 
-"""Valid transitions update and save state_name in the database."""
 def test_valid_transitions_save_state_to_database(db_engine, seed_data):
+    """Valid transitions update and save state_name in the database."""
     applied = applications_svc.apply(
         graduate_id=seed_data["dcit_grad_id"],
         listing_id=seed_data["open_listing_id"],
@@ -154,8 +153,9 @@ def test_valid_transitions_save_state_to_database(db_engine, seed_data):
             assert db_row is not None
             assert db_row.state_name == expected_state
 
-"""Illegal and unknown actions leave state_name unchanged in the database."""
+
 def test_refused_transition_leaves_database_unchanged(db_engine, seed_data):
+    """Illegal and unknown actions leave state_name unchanged in the database."""
     applied = applications_svc.apply(
         graduate_id=seed_data["dcit_grad_id"],
         listing_id=seed_data["open_listing_id"],
@@ -185,8 +185,8 @@ def test_refused_transition_leaves_database_unchanged(db_engine, seed_data):
         assert session.get(Application, app_id).state_name == "submitted"
 
 
-"""Rejected and hired applications refuse all further actions in the database."""
 def test_final_states_refuse_all_actions_in_db(db_engine, seed_data):
+    """Rejected and hired applications refuse all further actions in the database."""
     applied = applications_svc.apply(
         graduate_id=seed_data["dcit_grad_id"],
         listing_id=seed_data["open_listing_id"],
@@ -194,9 +194,15 @@ def test_final_states_refuse_all_actions_in_db(db_engine, seed_data):
     )
     app_id = applied["application_id"]
 
-    applications_svc.transition_application(seed_data["employer_id"], app_id, "mark_reviewed")
-    applications_svc.transition_application(seed_data["employer_id"], app_id, "shortlist")
-    rej = applications_svc.transition_application(seed_data["employer_id"], app_id, "reject")
+    applications_svc.transition_application(
+        seed_data["employer_id"], app_id, "mark_reviewed"
+    )
+    applications_svc.transition_application(
+        seed_data["employer_id"], app_id, "shortlist"
+    )
+    rej = applications_svc.transition_application(
+        seed_data["employer_id"], app_id, "reject"
+    )
     assert rej["ok"] is True
 
     for action in ("mark_reviewed", "shortlist", "reject", "hire"):
@@ -210,8 +216,8 @@ def test_final_states_refuse_all_actions_in_db(db_engine, seed_data):
             assert session.get(Application, app_id).state_name == "rejected"
 
 
-"""Graduate and employer views return the exact same status (AC 11)."""
 def test_ac11_graduate_and_employer_views_match_across_lifecycle(seed_data):
+    """Graduate and employer views return the exact same status (AC 11)."""
     applied = applications_svc.apply(
         graduate_id=seed_data["dcit_grad_id"],
         listing_id=seed_data["open_listing_id"],
@@ -238,9 +244,9 @@ def test_ac11_graduate_and_employer_views_match_across_lifecycle(seed_data):
         assert grad_app["state_name"] == emp_app["state_name"]
 
 
-"""Submitted listings start in pending status."""
 def test_submit_listing_starts_as_pending(db_engine, seed_data):
-    tomorrow = (date.today() + timedelta(days=5)).isoformat()
+    """Submitted listings start in pending status."""
+    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=5)).isoformat()
     res = listings_svc.submit_listing(
         employer_id=seed_data["employer_id"],
         title="Cloud Engineer",
@@ -258,8 +264,8 @@ def test_submit_listing_starts_as_pending(db_engine, seed_data):
         assert saved.status == "pending"
 
 
-"""Graduate job listing view returns only published, unexpired jobs."""
 def test_list_jobs_for_graduates_returns_only_published_and_unexpired(seed_data):
+    """Graduate job listing view returns only published, unexpired jobs."""
     visible = listings_svc.list_jobs_for_graduates()
     visible_ids = {job["id"] for job in visible}
 
@@ -268,8 +274,8 @@ def test_list_jobs_for_graduates_returns_only_published_and_unexpired(seed_data)
     assert seed_data["expired_listing_id"] not in visible_ids
 
 
-"""Only eligible DCIT graduates can subscribe to job alerts."""
 def test_subscribe_enforces_dcit_eligibility(db_engine, seed_data):
+    """Only eligible DCIT graduates can subscribe to job alerts."""
     ineligible = listings_svc.subscribe(seed_data["non_dcit_grad_id"])
     assert ineligible["ok"] is False
     assert ineligible["status_code"] == 403
@@ -283,8 +289,8 @@ def test_subscribe_enforces_dcit_eligibility(db_engine, seed_data):
         assert subs[0].graduate_id == seed_data["dcit_grad_id"]
 
 
-"""Publishing a pending listing creates notifications for subscribers."""
 def test_publish_listing_notifies_subscribers(db_engine, seed_data):
+    """Publishing a pending listing creates notifications for subscribers."""
     listings_svc.subscribe(seed_data["dcit_grad_id"])
 
     pub = listings_svc.publish_listing(
