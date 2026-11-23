@@ -127,7 +127,9 @@ def my_apps(actor_id: int) -> dict[str, Any]:
 def applicants(listing_id: int, actor_id: int) -> dict[str, Any]:
     result = applications.listing_applicants(actor_id, listing_id)
     if not result.get("ok"):
-        raise HTTPException(status_code=403, detail=result.get("error"))
+        raise HTTPException(
+            status_code=result.get("status_code", 403), detail=result.get("error")
+        )
     return result
 
 
@@ -135,7 +137,9 @@ def applicants(listing_id: int, actor_id: int) -> dict[str, Any]:
 def export(listing_id: int, actor_id: int) -> dict[str, Any]:
     result = applications.export_applicants(actor_id, listing_id)
     if not result.get("ok"):
-        raise HTTPException(status_code=403, detail=result.get("error"))
+        raise HTTPException(
+            status_code=result.get("status_code", 403), detail=result.get("error")
+        )
     return result
 
 
