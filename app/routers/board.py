@@ -1,14 +1,20 @@
-"""Job-board scenario JSON API (OpenAPI /docs)."""
+"""Job-board scenario JSON API (OpenAPI /docs).
+
+Log in with POST /api/auth/login first. It sets the access_token cookie,
+and every other route except /api/jobs takes the acting user from it.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from app.dependencies.auth import AuthDep
 from app.services import applications, listings
 from app.services import board_auth as auth
+from app.utilities.security import access_token_cookie_kwargs, create_access_token
 
 router = APIRouter(tags=["job-board"])
 
@@ -25,38 +31,33 @@ class ListingBody(BaseModel):
     apply_mode: str = Field(description="collect | external")
     deadline: str = Field(description="ISO date YYYY-MM-DD")
     external_url: str | None = None
-    actor_id: int = Field(description="Acting user id (demo auth)")
-
-
-class ActorBody(BaseModel):
-    actor_id: int
 
 
 class ApplyBody(BaseModel):
     listing_id: int
     cover_letter: str
     resume_text: str | None = None
-    actor_id: int
 
 
 class TransitionBody(BaseModel):
     action: str = Field(
         description="mark_reviewed | shortlist | reject | hire"
     )
-    actor_id: int
 
 
 @router.post("/auth/login")
-def login(body: LoginBody) -> dict[str, Any]:
+def login(body: LoginBody, response: Response) -> dict[str, Any]:
     user = auth.login(body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="invalid credentials")
+    token = create_access_token(data={"sub": str(user["id"]), "role": user["role"]})
+    response.set_cookie(key="access_token", value=token, **access_token_cookie_kwargs())
     return {"user": user}
 
 
 @router.post("/graduates/subscribe")
-def subscribe(body: ActorBody) -> dict[str, Any]:
-    result = listings.subscribe(body.actor_id)
+def subscribe(user: AuthDep) -> dict[str, Any]:
+    result = listings.subscribe(user.id)
     if not result.get("ok"):
         raise HTTPException(
             status_code=result.get("status_code", 400), detail=result.get("error")
@@ -70,17 +71,16 @@ def jobs() -> dict[str, Any]:
 
 
 @router.get("/admin/listings/pending")
-def pending(actor_id: int) -> dict[str, Any]:
-    actor = auth.get_user(actor_id)
-    if not actor or actor["role"] != "admin":
+def pending(user: AuthDep) -> dict[str, Any]:
+    if user.role != "admin":
         raise HTTPException(status_code=403, detail="admin only")
     return {"listings": listings.list_pending_for_admin()}
 
 
 @router.post("/employer/listings")
-def submit_listing(body: ListingBody) -> dict[str, Any]:
+def submit_listing(body: ListingBody, user: AuthDep) -> dict[str, Any]:
     result = listings.submit_listing(
-        body.actor_id,
+        user.id,
         body.title,
         body.company,
         body.description,
@@ -94,25 +94,25 @@ def submit_listing(body: ListingBody) -> dict[str, Any]:
 
 
 @router.post("/admin/listings/{listing_id}/publish")
-def publish(listing_id: int, body: ActorBody) -> dict[str, Any]:
-    result = listings.publish_listing(body.actor_id, listing_id)
+def publish(listing_id: int, user: AuthDep) -> dict[str, Any]:
+    result = listings.publish_listing(user.id, listing_id)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     return result
 
 
 @router.post("/admin/listings/{listing_id}/notify")
-def notify(listing_id: int, body: ActorBody) -> dict[str, Any]:
-    result = listings.notify_subscribers(body.actor_id, listing_id)
+def notify(listing_id: int, user: AuthDep) -> dict[str, Any]:
+    result = listings.notify_subscribers(user.id, listing_id)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error"))
     return result
 
 
 @router.post("/graduates/applications")
-def apply(body: ApplyBody) -> dict[str, Any]:
+def apply(body: ApplyBody, user: AuthDep) -> dict[str, Any]:
     result = applications.apply(
-        body.actor_id, body.listing_id, body.cover_letter, body.resume_text
+        user.id, body.listing_id, body.cover_letter, body.resume_text
     )
     if not result.get("ok"):
                 raise HTTPException(
@@ -121,13 +121,13 @@ def apply(body: ApplyBody) -> dict[str, Any]:
 
 
 @router.get("/graduates/applications")
-def my_apps(actor_id: int) -> dict[str, Any]:
-    return {"applications": applications.my_applications(actor_id)}
+def my_apps(user: AuthDep) -> dict[str, Any]:
+    return {"applications": applications.my_applications(user.id)}
 
 
 @router.get("/listings/{listing_id}/applicants")
-def applicants(listing_id: int, actor_id: int) -> dict[str, Any]:
-    result = applications.listing_applicants(actor_id, listing_id)
+def applicants(listing_id: int, user: AuthDep) -> dict[str, Any]:
+    result = applications.listing_applicants(user.id, listing_id)
     if not result.get("ok"):
         raise HTTPException(
             status_code=result.get("status_code", 403), detail=result.get("error")
@@ -136,8 +136,8 @@ def applicants(listing_id: int, actor_id: int) -> dict[str, Any]:
 
 
 @router.get("/admin/listings/{listing_id}/export")
-def export(listing_id: int, actor_id: int) -> dict[str, Any]:
-    result = applications.export_applicants(actor_id, listing_id)
+def export(listing_id: int, user: AuthDep) -> dict[str, Any]:
+    result = applications.export_applicants(user.id, listing_id)
     if not result.get("ok"):
         raise HTTPException(
             status_code=result.get("status_code", 403), detail=result.get("error")
@@ -146,9 +146,9 @@ def export(listing_id: int, actor_id: int) -> dict[str, Any]:
 
 
 @router.post("/applications/{application_id}/transition")
-def transition(application_id: int, body: TransitionBody) -> dict[str, Any]:
+def transition(application_id: int, body: TransitionBody, user: AuthDep) -> dict[str, Any]:
     result = applications.transition_application(
-        body.actor_id, application_id, body.action
+        user.id, application_id, body.action
     )
     if not result.get("ok"):
         raise HTTPException(
